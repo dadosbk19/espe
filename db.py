@@ -1,4 +1,9 @@
-"""Conexão com o Supabase e funções de consulta/escrita."""
+"""Conexão com o Supabase e funções de consulta/escrita.
+
+As consultas de aulas montam os 'joins' (aluno e professora) em Python,
+em vez de usar a sintaxe embutida do PostgREST. Isso evita problemas de
+compatibilidade entre versões da biblioteca supabase-py.
+"""
 import streamlit as st
 from supabase import create_client
 
@@ -23,15 +28,30 @@ def listar_pacotes():
     return get_client().table("pacotes").select("*").execute().data
 
 
+def _mapa(tabela, campos):
+    """Devolve {id: {campos...}} para montar joins em memória."""
+    linhas = get_client().table(tabela).select("*").execute().data
+    out = {}
+    for r in linhas:
+        out[r["id"]] = {c: r.get(c) for c in campos}
+    return out
+
+
 def listar_aulas(professora_id=None, mes=None):
-    q = get_client().table("aulas").select(
-        "*, alunos(nome,serie,pacote_ativo,valor_hora), professoras(nome)"
-    )
+    q = get_client().table("aulas").select("*")
     if professora_id:
         q = q.eq("professora_id", professora_id)
     if mes:
         q = q.eq("mes", mes)
-    return q.order("data").execute().data
+    aulas = q.order("data").execute().data
+
+    alunos = _mapa("alunos", ["nome", "serie", "pacote_ativo", "valor_hora"])
+    profs = _mapa("professoras", ["nome"])
+
+    for a in aulas:
+        a["alunos"] = alunos.get(a.get("aluno_id"), {"nome": "—"})
+        a["professoras"] = profs.get(a.get("professora_id"), {"nome": "—"})
+    return aulas
 
 
 def get_fechamento(professora_id, mes):
@@ -41,8 +61,12 @@ def get_fechamento(professora_id, mes):
 
 
 def listar_fechamentos(mes):
-    return (get_client().table("fechamentos").select("*, professoras(nome)")
-            .eq("mes", mes).execute().data)
+    fechs = (get_client().table("fechamentos").select("*")
+             .eq("mes", mes).execute().data)
+    profs = _mapa("professoras", ["nome"])
+    for f in fechs:
+        f["professoras"] = profs.get(f.get("professora_id"), {"nome": "—"})
+    return fechs
 
 
 # ---------- ESCRITAS ----------
